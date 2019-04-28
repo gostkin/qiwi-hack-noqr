@@ -24,6 +24,7 @@ import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.ResponseHandler;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpPut;
 import org.apache.http.impl.client.DefaultHttpClient;
@@ -54,6 +55,8 @@ public class ApprovalMenu extends Fragment {
     EditText passwordEdit;
     EditText pk, sk;
     EditText passportEdit;
+
+    String tk;
 
     RelativeLayout generationLayout;
 
@@ -138,11 +141,18 @@ public class ApprovalMenu extends Fragment {
                 try {
 //                    new RequestTask().execute();
                     Context ctx = getContext();
-                    String pkc = pk.getText().toString();
                     String psc = passportEdit.getText().toString();
-                    if (pkc.isEmpty() || psc.isEmpty()) {
+                    if (psc.isEmpty()) {
                         Toast.makeText(getContext(),"You should provide all required data", Toast.LENGTH_SHORT).show();
                     } else {
+                        AsyncTask taskTk = new GetTemporaryKey().execute(passportEdit.getText().toString());
+                        String resTk = ((GetTemporaryKey) taskTk).get();
+                        if (resTk.startsWith("error")) {
+                            Toast.makeText(getContext(),"Verification failed: " + resTk, Toast.LENGTH_SHORT).show();
+                        } else {
+                            tk = resTk;
+                        }
+
                         AsyncTask task = new DownloadWebpageTask().execute(pk.getText().toString(), passportEdit.getText().toString());
                         String res = ((DownloadWebpageTask) task).get();
                         if (res.startsWith("error")) {
@@ -175,21 +185,10 @@ public class ApprovalMenu extends Fragment {
 
                     String sk = SaveSharedPreference.getEncryptedSK(ctx);
                     // Generating IV.
-                    byte[] IV = "WRNlywK6BCRpCaJI".getBytes();
-                    String key = "fZhcWmVq0eFG9mZaoCvPKebJfuoCsBgo";
 
-                    System.out.println("Original Text  : "+sk);
+                    String cipherText = SymmetricEncryption.encrypt(sk, tk);
 
-                    byte[] cipherText = AESEncryption.encrypt(sk.getBytes(),key.getBytes(), IV);
-                    String encrypted = Base64.encodeToString(cipherText, 0);
-                    System.out.println("Original Text  : "+sk);
-
-                    System.out.println("Encrypted Text : "+ encrypted);
-
-                    String decryptedText = AESEncryption.decrypt(cipherText,key.getBytes(), IV);
-                    System.out.println("Decrypted Text : "+decryptedText);
-
-                    AsyncTask finalizing = new PutInfo().execute(SaveSharedPreference.getID(ctx), encrypted);
+                    AsyncTask finalizing = new PutInfo().execute(pk.getText().toString(), cipherText);
                     String final_res = ((PutInfo) finalizing).get();
                     if (final_res.startsWith("error")) {
                         Toast.makeText(getContext(),"Verification failed" + final_res, Toast.LENGTH_SHORT).show();
@@ -217,7 +216,6 @@ public class ApprovalMenu extends Fragment {
         ECKeyPair pair = ECKeyPair.createNew(false);
         SaveSharedPreference.setKeys(context, pair, password);
     }
-
 
 
     private class DownloadWebpageTask extends AsyncTask<String, Void, String> {
@@ -270,6 +268,50 @@ public class ApprovalMenu extends Fragment {
         }
     }
 
+    private class GetTemporaryKey extends AsyncTask<String, Void, String> {
+        @Override
+        protected String doInBackground(String... urls) {
+            try {
+                return (String)downloadUrl((String)urls[0]);
+            } catch (IOException e) {
+                return "error" + e.getMessage();
+            }
+        }
+
+        private String downloadUrl(String passportData) throws IOException {
+            HttpClient httpclient = new DefaultHttpClient();
+            HttpGet httpGet = new HttpGet("http://10.20.3.54:3500/ibe/secret/" + passportData);
+
+            try {
+                ResponseHandler<String> responseHandler = new ResponseHandler<String>() {
+                    @Override
+                    public String handleResponse(
+                            final HttpResponse response) throws ClientProtocolException, IOException {
+                        int status = response.getStatusLine().getStatusCode();
+                        if (status >= 200 && status <= 201) {
+                            HttpEntity entity = response.getEntity();
+                            return entity != null ? EntityUtils.toString(entity) : null;
+                        } else {
+                            throw new ClientProtocolException("Unexpected response status: " + status);
+                        }
+                    }
+
+                };
+                String responseBody = httpclient.execute(httpGet, responseHandler);
+                System.out.println("----------------------------------------");
+                System.out.println(responseBody);
+
+                return responseBody;
+            } catch (ClientProtocolException e) {
+                e.printStackTrace();
+                return "error" + e.getMessage();
+            } catch (IOException e) {
+                e.printStackTrace();
+                return "error" + e.getMessage();
+            }
+        }
+    }
+
     private class PutInfo extends AsyncTask<String, Void, String> {
 
         @Override
@@ -281,13 +323,13 @@ public class ApprovalMenu extends Fragment {
             }
         }
 
-        private String downloadUrl(String id, String encrypted) throws IOException {
+        private String downloadUrl(String pk, String encrypted) throws IOException {
             HttpClient httpclient = new DefaultHttpClient();
             HttpPut httpPut = new HttpPut("http://10.20.3.54:3500/api/v1/sber_cypher");
 
             try {
                 List<NameValuePair> nameValuePairs = new ArrayList<NameValuePair>(2);
-                nameValuePairs.add(new BasicNameValuePair("id", id));
+                nameValuePairs.add(new BasicNameValuePair("publicKey", pk));
                 nameValuePairs.add(new BasicNameValuePair("cypherText", encrypted));
                 httpPut.setEntity(new UrlEncodedFormEntity(nameValuePairs));
 

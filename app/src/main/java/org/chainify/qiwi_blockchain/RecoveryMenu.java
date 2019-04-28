@@ -89,6 +89,16 @@ public class RecoveryMenu extends Fragment {
                     if (psc.isEmpty()) {
                         Toast.makeText(getContext(),"You should provide all required data", Toast.LENGTH_SHORT).show();
                     } else {
+
+                        String tempKey = "";
+                        AsyncTask taskTemp = new GetTemporaryKey().execute(passportEdit.getText().toString());
+                        String tkCandidate = ((GetTemporaryKey) taskTemp).get();
+                        if (tkCandidate.startsWith("error")) {
+                            Toast.makeText(getContext(),"Verification failed: " + tkCandidate, Toast.LENGTH_SHORT).show();
+                        } else {
+                            tempKey = tkCandidate;
+                        }
+
                         AsyncTask task = new RecoveryMenu.DownloadWebpageTask().execute(psc);
                         String res = ((RecoveryMenu.DownloadWebpageTask) task).get();
                         if (res.startsWith("error")) {
@@ -102,11 +112,7 @@ public class RecoveryMenu extends Fragment {
                                 cypher = obj.getString("cypherText");
 
 
-
-                                byte[] IV = "WRNlywK6BCRpCaJI".getBytes();
-                                String key = "fZhcWmVq0eFG9mZaoCvPKebJfuoCsBgo";
-
-                                String secret = AESEncryption.decrypt(Base64.decode(cypher, 0), key.getBytes(), IV);
+                                String secret = SymmetricEncryption.decrypt(cypher, tempKey);
 
                                 pk.setText(pkey);
                                 sk.setText(secret);
@@ -128,6 +134,51 @@ public class RecoveryMenu extends Fragment {
         updateVisibility(ctx);
 
         return thisView;
+    }
+
+
+    private class GetTemporaryKey extends AsyncTask<String, Void, String> {
+        @Override
+        protected String doInBackground(String... urls) {
+            try {
+                return (String)downloadUrl((String)urls[0]);
+            } catch (IOException e) {
+                return "error" + e.getMessage();
+            }
+        }
+
+        private String downloadUrl(String passportData) throws IOException {
+            HttpClient httpclient = new DefaultHttpClient();
+            HttpGet httpGet = new HttpGet("http://10.20.3.54:3500/ibe/secret/" + passportData);
+
+            try {
+                ResponseHandler<String> responseHandler = new ResponseHandler<String>() {
+                    @Override
+                    public String handleResponse(
+                            final HttpResponse response) throws ClientProtocolException, IOException {
+                        int status = response.getStatusLine().getStatusCode();
+                        if (status >= 200 && status <= 201) {
+                            HttpEntity entity = response.getEntity();
+                            return entity != null ? EntityUtils.toString(entity) : null;
+                        } else {
+                            throw new ClientProtocolException("Unexpected response status: " + status);
+                        }
+                    }
+
+                };
+                String responseBody = httpclient.execute(httpGet, responseHandler);
+                System.out.println("----------------------------------------");
+                System.out.println(responseBody);
+
+                return responseBody;
+            } catch (ClientProtocolException e) {
+                e.printStackTrace();
+                return "error" + e.getMessage();
+            } catch (IOException e) {
+                e.printStackTrace();
+                return "error" + e.getMessage();
+            }
+        }
     }
 
     private class DownloadWebpageTask extends AsyncTask<String, Void, String> {
